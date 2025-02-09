@@ -1,0 +1,30 @@
+import requests
+import os
+
+# Your Dune API key and query ID
+query_id = id here
+url = f"https://api.dune.com/api/v1/query/{query_id}/results/csv"
+
+# API headers
+headers = {
+    "X-DUNE-API-KEY": ""
+}
+
+# Sending the request
+response = requests.get(url, headers=headers)
+
+# Check if the request was successful
+if response.status_code == 200:
+    # Define the directory and file path
+    directory = "openwallets"
+    file_path = os.path.join(directory, f"data{query_id}.csv")
+    
+    # Create the directory if it doesn't exist
+    os.makedirs(directory, exist_ok=True)
+    
+    # Save the CSV file
+    with open(file_path, "w", encoding="utf-8") as file:
+        file.write(response.text)
+    print(f"CSV file saved as '{file_path}'")
+else:
+    print(f"Failed to retrieve data. Status code: {response.status_code}, Message: {response.text}")
