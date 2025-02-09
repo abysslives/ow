@@ -1,0 +1,70 @@
+
+GMGN ENDPOINTS & INFO
+**This is not all there are many more** **They can be found within other scripts as well**
+
+
+GMGN First buyers, descending [First 70]
+https://gmgn.ai/defi/quotation/v1/tokens/top_buyers/sol/{ca}
+
+https://gmgn.ai/defi/quotation/v1/wallet/sol/holdings/%3Cca%3E?orderby=last_active_timestamp&direction=desc&showsmall=true&sellout=true&limit=50&tx30d=true
+
+https://gmgn.ai/defi/quotation/v1/smartmoney/sol/daily_profit/%7Bca%7D?period=30d
+
+https://gmgn.ai/defi/quotation/v1/wallet/sol/holdings/
+
+https://gmgn.ai/defi/quotation/v1/smartmoney/sol/walletNew/%7Bca%7D?period=7d
+
+https://gmgn.ai/defi/quotation/v1/wallet_activity/sol?type=buy&type=sell&wallet={ca}&limit=10&cost=10
+
+https://gmgn.ai/defi/quotation/v1/wallet/sol/holdings/%7Bca%7D?orderby=last_active_timestamp&direction=desc&showsmall=false&sellout=false&limit=50
+
+https://gmgn.ai/defi/quotation/v1/smartmoney/sol/daily_profit/%7Bca%7D?period=7d
+
+https://gmgn.ai/defi/quotation/v1/tokens/top_traders/sol/%7Bca%7D?orderby=realized_profit&direction=desc
+
+https://gmgn.ai/defi/quotation/v1/tokens/top_holders/sol/%7Bca%7D?limit=20&cost=20&tag=All&orderby=amount_percentage&direction=desc
+
+https://gmgn.ai/defi/quotation/v1/tokens/rug_history/sol/5LrPWcW9WYQfyie8qCoLk7hrDhou6FtSmTL2tjnmpump
+
+https://gmgn.ai/api/v1/token_trader_stat/sol/CfgmB9iTWABdYh3CHQQDUGtWy18rMNAEEqyp4GrJpump
+
+--------------------------------
+
+PUMPFUN ENDPOINTS & INFO
+
+Pumpfun Chart data [Candles]
+https://frontend-api.pump.fun/candlesticks/{ca}?offset=0&limit=1000&timeframe=5
+
+Pumpfun Replies
+https://frontend-api.pump.fun/trades/{ca}?limit=1000&offset=0
+
+Profile info 
+https://pump.fun/profile/{wallet}?_rsc=v4ng8
+
+Pumpfun Trade History (Descending, new to old) [wallet addy, token buy amount, buy or sell trade]
+https://frontend-api.pump.fun/trades/all/{ca}?limit=1000&offset=0&minimumSize=0
+
+https://pumpportal.fun/
+
+https://frontend-api.pump.fun/sol-price
+
+https://frontend-api.pump.fun/trades/%7Bcontractaddy%7D?limit=200&offset=0
+--------------------------------
+
+RANDOM ENPOINTS & INFO
+
+https://www.postman.com/
+
+https://toto.oz.xyz/
+
+--------------------------------
+
+CIELO
+
+--------------------------------
+
+HELIUS ENDPOINTS & INFO
+
+https://docs.helius.dev/solana-apis/enhanced-transactions-api/parse-transaction-s
+
+https://docs.helius.dev/solana-apis/token-balances-api
