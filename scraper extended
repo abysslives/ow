@@ -1,0 +1,144 @@
+import tls_client
+import subprocess
+import time
+
+# Initialize TLS session
+session = tls_client.Session(
+    client_identifier="firefox_114",  # Updated to a more recent identifier
+    random_tls_extension_order=True
+)
+
+# Enhanced Headers for API requests
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:114.0) Gecko/20100101 Firefox/114.0",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://gmgn.ai/",
+    "Origin": "https://gmgn.ai",
+    "Connection": "keep-alive",
+    "DNT": "1",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+def rotate_ip():
+    """Rotate IP using Mullvad VPN."""
+    try:
+        subprocess.run(["mullvad", "disconnect"], check=True)
+        time.sleep(5)
+        subprocess.run(["mullvad", "connect"], check=True)
+        time.sleep(5)
+        print("IP rotated successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to rotate IP: {e}")
+
+def get_top_traders_addresses(contract_address: str) -> list:
+    url = f"https://gmgn.ai/defi/quotation/v1/tokens/top_traders/sol/{contract_address}?limit=1000&orderby=profit&direction=desc"
+    unique_wallets = set()
+    attempt = 0
+    max_retries = 3
+
+    while attempt < max_retries:
+        try:
+            response = session.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                if data["code"] == 0 and "data" in data:
+                    for entry in data["data"]:
+                        wallet_address = entry.get("address")
+                        if wallet_address:
+                            unique_wallets.add(wallet_address)
+                    print(f"Collected {len(unique_wallets)} wallets from top traders for CA {contract_address}")
+                    return list(unique_wallets)
+            elif response.status_code in [403, 429]:  # Rotate IP for rate limit or forbidden access
+                print(f"Error {response.status_code} for {contract_address}. Rotating IP...")
+                rotate_ip()
+            else:
+                print(f"Request failed with status code: {response.status_code}")
+                return []
+
+        except Exception as e:
+            print(f"Request failed for {contract_address}: {e}. Rotating IP...")
+            rotate_ip()
+
+        attempt += 1
+        time.sleep(2)
+    print(f"Failed to fetch top traders for CA {contract_address} after {max_retries} attempts.")
+    return []
+
+def get_top_buyers_addresses(contract_address: str) -> list:
+    url = f"https://gmgn.ai/defi/quotation/v1/tokens/top_buyers/sol/{contract_address}"
+    unique_wallets = set()
+    attempt = 0
+    max_retries = 3
+
+    while attempt < max_retries:
+        try:
+            response = session.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                if data["code"] == 0 and "data" in data and "holders" in data["data"] and "holderInfo" in data["data"]["holders"]:
+                    for holder in data["data"]["holders"]["holderInfo"]:
+                        wallet_address = holder.get("wallet_address")
+                        if wallet_address:
+                            unique_wallets.add(wallet_address)
+                    print(f"Collected {len(unique_wallets)} wallets from top buyers for CA {contract_address}")
+                    return list(unique_wallets)
+            elif response.status_code in [403, 429]:
+                print(f"Error {response.status_code} for {contract_address}. Rotating IP...")
+                rotate_ip()
+            else:
+                print(f"Request failed with status code: {response.status_code}")
+                return []
+
+        except Exception as e:
+            print(f"Request failed for {contract_address}: {e}. Rotating IP...")
+            rotate_ip()
+
+        attempt += 1
+        time.sleep(2)
+    print(f"Failed to fetch top buyers for CA {contract_address} after {max_retries} attempts.")
+    return []
+def parse_cas_from_string(input_string: str) -> list:
+    cas = [ca.strip() for ca in input_string.split(",") if ca.strip()]
+    unique_cas = list(set(cas))
+    print(f"Total unique CAs extracted: {len(unique_cas)}")
+    return unique_cas
+
+def collect_wallets_for_ca(ca: str) -> list:
+    """Collect wallet addresses from all sources for a specific CA and remove duplicates."""
+    top_traders = get_top_traders_addresses(ca)
+    top_buyers = get_top_buyers_addresses(ca)
+
+    # Combine all wallets and remove duplicates
+    unique_wallets = set(top_traders + top_buyers)
+    print(f"Total unique wallets collected for CA {ca}: {len(unique_wallets)}")
+    return list(unique_wallets)
+def collect_wallets_for_multiple_cas(ca_list: list) -> list:
+    """Collect all unique wallets across multiple CAs."""
+    all_wallet_addresses = set()
+
+    for ca in ca_list:
+        print(f"\nCollecting wallets for CA: {ca}")
+        ca_wallets = collect_wallets_for_ca(ca)
+        all_wallet_addresses.update(ca_wallets)
+        rotate_ip()  # Rotate IP after each CA
+
+    print(f"\nTotal unique wallet addresses collected across all CAs: {len(all_wallet_addresses)}")
+    return list(all_wallet_addresses)
+
+def main():
+    user_input = input("Enter a comma-separated string of CAs: ").strip()
+    ca_list = parse_cas_from_string(user_input)
+    
+    if not ca_list:
+        print("No valid contract addresses provided.")
+        return
+
+    all_wallets_to_analyze = collect_wallets_for_multiple_cas(ca_list)
+    total_wallets = len(all_wallets_to_analyze)
+    print(f"\nTotal unique wallet addresses collected for analysis: {total_wallets}")
+
+    # Now you can proceed with analyzing all_wallets_to_analyze
+
+if __name__ == "__main__":
+    main()
