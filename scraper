@@ -1,0 +1,317 @@
+import tls_client
+import time
+import subprocess
+import csv
+import os
+import re
+import random
+from top_traders import get_top_traders_addresses, get_top_buyers_addresses
+
+session = tls_client.Session(
+    client_identifier="firefox_114",
+    random_tls_extension_order=True
+)
+
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:114.0) Gecko/20100101 Firefox/114.0",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://gmgn.ai/",
+    "Origin": "https://gmgn.ai",
+    "Connection": "keep-alive",
+    "DNT": "1",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+# Path to CSV file
+csv_file_path = ""
+
+def parse_cas_from_string(input_string: str) -> list:
+    """Parse the input string into a list of unique contract addresses."""
+    cas = [ca.strip() for ca in input_string.split(",") if ca.strip()]
+    unique_cas = list(set(cas))
+    print(f"Total unique CAs extracted: {len(unique_cas)}")
+    return unique_cas
+# Load existing wallets to avoid duplicates
+def load_existing_wallets_from_csv():
+    existing_wallets = set()
+    if os.path.exists(csv_file_path):
+        with open(csv_file_path, mode="r") as csv_file:
+            reader = csv.DictReader(csv_file)
+            for row in reader:
+                existing_wallets.add(row["wallet"])  # Assumes 'wallet' column name
+    return existing_wallets
+
+# Function to rotate IP using Mullvad
+locations = [
+    # Countries
+    "al", "at", "au", "be", "bg", "ca", "ch", "cz", "de", "dk", "ee", "es",
+    "fi", "fr", "gr", "hk", "hu", "ie", "il", "it", "jp", "lt", "lu", "lv",
+    "md", "mk", "nl", "no", "nz", "pl", "pt", "ro", "rs", "se", "sg", "sk",
+    "th", "tr", "uk", "us",
+
+    # Cities
+    "ca-mtr", "ca-van", "de-ber", "de-frk", "dk-cph", "fi-hel", "fr-par",
+    "gb-ldn", "ie-dub", "it-mil", "nl-ams", "no-osl", "pl-waw", "se-got",
+    "se-sto", "sg-sin", "us-atl", "us-dal", "us-lax", "us-mia", "us-nyc",
+    "us-sea", "us-sfo"
+]
+
+def rotate_ip():
+    """Rotate IP by selecting a random location, disconnecting, and reconnecting with Mullvad VPN."""
+    attempts = 0
+    max_attempts = 5  # Limit to avoid infinite retries in case of persistent failures
+    
+    while attempts < max_attempts:
+        try:
+            # Select a random location from the list
+            location = random.choice(locations)
+            print(f"Attempting to switch Mullvad location to {location}.")
+
+            # Set the Mullvad location
+            subprocess.run(["mullvad", "relay", "set", "location", location], check=True)
+
+            # Disconnect and reconnect to apply the new location
+            subprocess.run(["mullvad", "disconnect"], check=True)
+            time.sleep(5)  # Wait for disconnection
+            subprocess.run(["mullvad", "connect"], check=True)
+            time.sleep(5)  # Wait for reconnection
+            print(f"IP rotated and location switched to {location} successfully.")
+            return  # Exit if successful
+
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to rotate IP or switch location to {location}: {e}")
+            attempts += 1
+            time.sleep(2)  # Brief wait before retrying with a new location
+
+    print("Failed to rotate IP after multiple attempts. Please check your Mullvad connection or try manually.")
+
+
+from datetime import datetime
+def collect_wallet_data(wallet: str) -> dict:
+    url = f"https://gmgn.ai/defi/quotation/v1/smartmoney/sol/walletNew/{wallet}"
+    retries = 3  # Number of retry attempts
+
+    for attempt in range(retries):
+        try:
+            response = session.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json().get("data", {})
+
+                # Convert the tags list into a string without brackets/quotes
+                raw_tags = data.get("tags", [])
+                if isinstance(raw_tags, list) and raw_tags:
+                    tags_str = ", ".join(raw_tags)
+                else:
+                    tags_str = "None"
+
+                wallet_data = {
+                    "wallet": wallet,
+                    "unrealized_profit": data.get("unrealized_profit", "None"),
+                    "unrealized_pnl": data.get("unrealized_pnl", "None"),
+                    "realized_profit_7d": data.get("realized_profit_7d", "None"),
+                    "realized_profit_30d": data.get("realized_profit_30d", "None"),
+                    "total_profit": data.get("total_profit", "None"),
+                    "winrate": data.get("winrate", "None"),
+                    "buy_7d": data.get("buy_7d", "None"),
+                    "sell_7d": data.get("sell_7d", "None"),
+                    "token_sold_avg_profit": data.get("token_sold_avg_profit", "None"),
+                    "sol_balance": data.get("sol_balance", "None"),
+                    "pnl_lt_2x_num": data.get("pnl_lt_2x_num", "None"),
+                    "pnl_2x_5x_num": data.get("pnl_2x_5x_num", "None"),
+                    "pnl_gt_5x_num": data.get("pnl_gt_5x_num", "None"),
+                    "tags": tags_str,
+                    "avg_holding_peroid": data.get("avg_holding_peroid", "None"),
+                    "date_reviewed": datetime.now().strftime("%m-%d-%Y")
+                }
+
+                # Check if all the retrieved data (except the wallet field) is "None"
+                if all(value == "None" for key, value in wallet_data.items() if key != "wallet"):
+                    print(f"No data found for wallet {wallet}. Retrying...")
+                    raise ValueError("Incomplete data")  # Trigger IP rotation on empty data
+
+                return wallet_data
+
+            elif response.status_code in {403, 429, 500}:
+                print(f"Error {response.status_code} for wallet {wallet}. Rotating IP and retrying...")
+                rotate_ip()
+            else:
+                print(f"Request failed for wallet {wallet}: Status code {response.status_code}")
+                return {}
+
+        except Exception as e:
+            print(f"Error for wallet {wallet}: {e}. Retrying...")
+            rotate_ip()  # Rotate IP on any exception
+
+        time.sleep(2 ** attempt)  # Exponential backoff
+
+    print(f"Failed to collect data for wallet {wallet} after {retries} attempts.")
+    return {}
+def calculate_fdv_insights(wallet):
+    url = f"https://gmgn.ai/api/v1/wallet_holdings/sol/{wallet}?limit=500&orderby=last_active_timestamp&direction=desc&showsmall=true&sellout=true&tx100d=true"
+    retries = 3  # Number of retry attempts
+    for attempt in range(retries):
+        try:
+            response = session.get(url, headers=headers)
+            if response.status_code == 429:
+                print(f"FDV insights rate limit for wallet {wallet}. Rotating IP...")
+                rotate_ip()
+                time.sleep(2)
+                response = session.get(url, headers=headers)
+
+            if response.status_code != 200:
+                print(f"FDV data request failed for wallet {wallet}: Status code {response.status_code}")
+                return {}
+
+            holdings = response.json().get("data", {}).get("holdings", [])
+            fdv_insights = {
+                "sub_150k_avg_entry": [],
+                "sub_150k_entries": 0,
+                "sub_150k_avg_buy_amount": [],
+                "sub_150k_buy_30d": [],
+                "sub_150k_sell_30d": [],
+                "sub_150k_total_profit_pnl": [],
+                "150k_1m_avg_entry": [],
+                "150k_1m_entries": 0,
+                "150k_1m_avg_buy_amount": [],
+                "150k_1m_buy_30d": [],
+                "150k_1m_sell_30d": [],
+                "150k_1m_total_profit_pnl": []
+            }
+            
+            for token in holdings:
+                avg_cost = float(token.get("avg_cost", 0))
+                history_bought_cost = float(token.get("history_bought_cost", 0))
+                buy_30d = token.get("buy_30d", 0)
+                sell_30d = token.get("sell_30d", 0)
+                total_profit_pnl = float(token.get("total_profit_pnl", 0))
+
+                if avg_cost <= 0.00015:
+                    fdv_insights["sub_150k_avg_entry"].append(avg_cost)
+                    fdv_insights["sub_150k_entries"] += 1
+                    fdv_insights["sub_150k_avg_buy_amount"].append(history_bought_cost)
+                    fdv_insights["sub_150k_buy_30d"].append(buy_30d)
+                    if sell_30d > 0:
+                        fdv_insights["sub_150k_sell_30d"].append(sell_30d)
+                    fdv_insights["sub_150k_total_profit_pnl"].append(total_profit_pnl)
+                elif 0.00015 < avg_cost <= 0.001:
+                    fdv_insights["150k_1m_avg_entry"].append(avg_cost)
+                    fdv_insights["150k_1m_entries"] += 1
+                    fdv_insights["150k_1m_avg_buy_amount"].append(history_bought_cost)
+                    fdv_insights["150k_1m_buy_30d"].append(buy_30d)
+                    if sell_30d > 0:
+                        fdv_insights["150k_1m_sell_30d"].append(sell_30d)
+                    fdv_insights["150k_1m_total_profit_pnl"].append(total_profit_pnl)
+
+            return {
+                "sub 150k avg entry": calculate_avg_fdv_cost(fdv_insights["sub_150k_avg_entry"]),
+                "sub 150k entries": fdv_insights["sub_150k_entries"],
+                "sub 150k avg buy amount": round(sum(fdv_insights["sub_150k_avg_buy_amount"]) / fdv_insights["sub_150k_entries"], 2) if fdv_insights["sub_150k_entries"] > 0 else "None",
+                "sub 150k avg buy 30d": round(sum(fdv_insights["sub_150k_buy_30d"]) / len(fdv_insights["sub_150k_buy_30d"]), 1) if fdv_insights["sub_150k_buy_30d"] else "None",
+                "sub 150k avg sell 30d": round(sum(fdv_insights["sub_150k_sell_30d"]) / len(fdv_insights["sub_150k_sell_30d"]), 1) if fdv_insights["sub_150k_sell_30d"] else "None",
+                "sub 150k avg total profit pnl": round(sum(fdv_insights["sub_150k_total_profit_pnl"]) / len(fdv_insights["sub_150k_total_profit_pnl"]), 4) if fdv_insights["sub_150k_total_profit_pnl"] else "None",
+                "150k - 1m avg entry": calculate_avg_fdv_cost(fdv_insights["150k_1m_avg_entry"]),
+                "150k - 1m entries": fdv_insights["150k_1m_entries"],
+                "150k - 1m avg buy amount": round(sum(fdv_insights["150k_1m_avg_buy_amount"]) / fdv_insights["150k_1m_entries"], 2) if fdv_insights["150k_1m_entries"] > 0 else "None",
+                "150k - 1m avg buy 30d": round(sum(fdv_insights["150k_1m_buy_30d"]) / len(fdv_insights["150k_1m_buy_30d"]), 1) if fdv_insights["150k_1m_buy_30d"] else "None",
+                "150k - 1m avg sell 30d": round(sum(fdv_insights["150k_1m_sell_30d"]) / len(fdv_insights["150k_1m_sell_30d"]), 1) if fdv_insights["150k_1m_sell_30d"] else "None",
+                "150k - 1m avg total profit pnl": round(sum(fdv_insights["150k_1m_total_profit_pnl"]) / len(fdv_insights["150k_1m_total_profit_pnl"]), 4) if fdv_insights["150k_1m_total_profit_pnl"] else "None"
+            }
+
+        except Exception as e:
+            print(f"Error processing FDV data for wallet {wallet}: {e}. Retrying...")
+            time.sleep(2 ** attempt)  # Exponential backoff
+
+    print(f"Failed to collect FDV insights for wallet {wallet} after {retries} attempts.")
+    return {}
+def calculate_avg_fdv_cost(costs):
+    if not costs:
+        return "None"
+    avg_cost = sum(costs) / len(costs)
+    return (avg_cost * 1e9)
+
+
+def save_to_csv(data, mode="a"):
+    file_is_empty = not os.path.isfile(csv_file_path) or os.path.getsize(csv_file_path) == 0
+
+    # Ensure `date_reviewed` is the last column
+    reordered_data = {key: data[key] for key in data if key != "date_reviewed"}
+    reordered_data["date_reviewed"] = data["date_reviewed"]
+
+    with open(csv_file_path, mode=mode, newline="") as csv_file:
+        fieldnames = reordered_data.keys()
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        
+        # Write header only if the file is empty
+        if file_is_empty:
+            writer.writeheader()
+        
+        # Write the row immediately after analysis
+        writer.writerow(reordered_data)
+    
+    print(f"Data for wallet {data['wallet']} saved to {csv_file_path}.")
+def round_data(data):
+    """Round numeric values in the data dictionary to two decimal places."""
+    for key, value in data.items():
+        if isinstance(value, (float, int)) and value != "None":
+            data[key] = round(value, 1)
+    return data
+
+
+def main():
+    try:
+        # Read CAs from form.txt
+        with open("", "r") as file:
+            file_content = file.read().strip()
+        
+        ca_list = parse_cas_from_string(file_content)
+        
+        if not ca_list:
+            print("No valid contract addresses found in the file.")
+            return
+
+        # Load existing wallets once at the start
+        existing_wallets = load_existing_wallets_from_csv()
+        all_wallets_to_analyze = set()
+
+        for ca in ca_list:
+            print(f"\nProcessing CA: {ca}")
+            
+            # Collect wallets from all sources for each CA
+            top_traders = get_top_traders_addresses(ca)
+            top_buyers = get_top_buyers_addresses(ca)
+
+            # Combine and deduplicate wallets for each CA
+            wallets_for_ca = set(top_traders + top_buyers)
+            
+            # Add CA wallets to the main set of wallets to analyze, excluding those already in CSV
+            wallets_to_add = {wallet for wallet in wallets_for_ca if wallet not in existing_wallets}
+            all_wallets_to_analyze.update(wallets_to_add)
+
+        # Analyze and save each wallet's data individually
+        for wallet in all_wallets_to_analyze:
+            primary_data = collect_wallet_data(wallet)
+            if not primary_data:
+                continue  # Skip if data couldn't be collected after retries
+            
+            fdv_insights = calculate_fdv_insights(wallet)
+            all_insights = {**primary_data, **fdv_insights}
+            
+            # Add the date_reviewed field after collecting all data
+            all_insights["date_reviewed"] = datetime.now().strftime("%m-%d-%Y")
+            
+            # Save data for each wallet immediately after analysis
+            save_to_csv(all_insights)
+            
+            # Mark the wallet as processed to prevent reprocessing
+            existing_wallets.add(wallet)
+
+        print("\nData collection complete.")
+
+    except FileNotFoundError:
+        print("The file 'form.txt' was not found. Please ensure it exists in the working directory.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+if __name__ == "__main__":
+    main()
