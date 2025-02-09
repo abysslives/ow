@@ -2,6 +2,25 @@
 GMGN ENDPOINTS & INFO
 **This is not all there are many more** **They can be found within other scripts as well**
 
+Bypass:
+
+# Initialize TLS session
+session = tls_client.Session(
+    client_identifier="firefox_114",  # Updated to a more recent identifier
+    random_tls_extension_order=True
+)
+
+# Enhanced Headers for API requests
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:114.0) Gecko/20100101 Firefox/114.0",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://gmgn.ai/",
+    "Origin": "https://gmgn.ai",
+    "Connection": "keep-alive",
+    "DNT": "1",
+    "Upgrade-Insecure-Requests": "1",
+}
 
 GMGN First buyers, descending [First 70]
 https://gmgn.ai/defi/quotation/v1/tokens/top_buyers/sol/{ca}
