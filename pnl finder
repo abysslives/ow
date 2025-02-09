@@ -1,0 +1,186 @@
+import requests
+import tls_client
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+
+# Create a TLS session with random TLS extension order
+session = tls_client.Session(
+    client_identifier="firefox92",
+    random_tls_extension_order=True
+)
+
+# Headers to mimic a real browser
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:92.0) Gecko/20100101 Firefox/92.0",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "DNT": "1",
+}
+
+# Fetch the current price of Solana in USD
+def get_solana_price():
+    sol_price_url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+    response = requests.get(sol_price_url)
+    if response.status_code == 200:
+        return response.json()['solana']['usd']
+    else:
+        return None
+
+# Convert Solana values to USD based on the current price
+def convert_sol_to_usd(sol_amount, sol_price):
+    return sol_amount * sol_price
+
+# Define the endpoint and function to get top traders for a specific token
+def get_top_traders(token_ca):
+    url = f"https://gmgn.ai/defi/quotation/v1/tokens/top_traders/sol/{token_ca}?limit=2000&cost=20&tag=All&orderby=amount_percentage&direction=desc"
+    response = session.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()["data"]
+    else:
+        return None
+
+# Function to calculate similarity and likelihood based on percentage difference
+def calculate_similarity(wallet, desired_data):
+    fields = ['buy_usd', 'realized_usd', 'unrealized_usd', 'percent_change', 'profit']
+    active_fields = [field for field in fields if desired_data[field] is not None]
+    weight = 1 / len(active_fields) if active_fields else 0
+    diffs = {}
+
+    if desired_data['buy_usd'] is not None:
+        diffs['buy_diff'] = abs(wallet.get('buy_volume_cur', 0) - desired_data['buy_usd']) / desired_data['buy_usd'] * 100
+    else:
+        diffs['buy_diff'] = 0
+    
+    if desired_data['realized_usd'] is not None:
+        diffs['sell_diff'] = abs(wallet.get('sell_volume_cur', 0) - desired_data['realized_usd']) / desired_data['realized_usd'] * 100
+    else:
+        diffs['sell_diff'] = 0
+    
+    if desired_data['unrealized_usd'] is not None and desired_data['unrealized_usd'] != 0:
+        diffs['unrealized_diff'] = abs(wallet.get('usd_value', 0) - desired_data['unrealized_usd']) / desired_data['unrealized_usd'] * 100
+    else:
+        diffs['unrealized_diff'] = 0
+    
+    if desired_data['percent_change'] is not None and wallet.get('profit_change') is not None:
+        diffs['percent_diff'] = abs((wallet['profit_change'] * 100) - desired_data['percent_change'])
+    else:
+        diffs['percent_diff'] = 0
+    
+    if desired_data['profit'] is not None:
+        diffs['profit_diff'] = abs(wallet.get('profit', 0) - desired_data['profit']) / desired_data['profit'] * 100 if desired_data['profit'] != 0 else 0
+    else:
+        diffs['profit_diff'] = 0
+
+    weighted_diff = sum(diffs[diff] * weight for diff in diffs)
+    likelihood = max(0, 100 - weighted_diff)
+
+    return weighted_diff, likelihood
+
+# Function to find similar wallets
+def find_similar_wallets(token_ca, buy_usd, realized_usd, unrealized_usd, percent_change, profit):
+    traders_data = get_top_traders(token_ca)
+    if traders_data is None:
+        return []
+
+    desired_data = {
+        "buy_usd": buy_usd if buy_usd != "none" else None,
+        "realized_usd": realized_usd if realized_usd != "none" else None,
+        "unrealized_usd": unrealized_usd if unrealized_usd != "none" else None,
+        "percent_change": percent_change if percent_change != "none" else None,
+        "profit": profit if profit != "none" else None
+    }
+
+    sorted_wallets = sorted(traders_data, key=lambda wallet: calculate_similarity(wallet, desired_data)[0])
+    top_wallets = sorted_wallets[:10]
+    output = []
+
+    for wallet in top_wallets:
+        avg_diff, likelihood = calculate_similarity(wallet, desired_data)
+        output.append(f"{wallet['address']} Buy: {wallet['buy_volume_cur']:.2f} "
+                      f"Sell: {wallet['sell_volume_cur']:.2f} Holding: {wallet['usd_value']:.2f} "
+                      f"Percent Change: {wallet['profit_change']*100:.2f}% Likelihood: {likelihood:.2f}%")
+
+    return output
+
+# Telegram bot interaction
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text('Hello! Use /analyze to get started.')
+
+async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text('Please provide the token contract address (CA):')
+    return 'TOKEN_CA'
+
+async def token_ca_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    token_ca = update.message.text
+    context.user_data['token_ca'] = token_ca
+    await update.message.reply_text('Please provide the buy amount in USD (or "none" if unavailable):')
+    return 'BUY_USD'
+
+async def buy_usd_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    buy_usd = update.message.text
+    context.user_data['buy_usd'] = float(buy_usd) if buy_usd != "none" else None
+    await update.message.reply_text('Please provide the realized amount in USD (or "none" if unavailable):')
+    return 'REALIZED_USD'
+
+async def realized_usd_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    realized_usd = update.message.text
+    context.user_data['realized_usd'] = float(realized_usd) if realized_usd != "none" else None
+    await update.message.reply_text('Please provide the unrealized amount in USD (or "none" if unavailable):')
+    return 'UNREALIZED_USD'
+
+async def unrealized_usd_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    unrealized_usd = update.message.text
+    context.user_data['unrealized_usd'] = float(unrealized_usd) if unrealized_usd != "none" else None
+    await update.message.reply_text('Please provide the percentage change in gains (or "none" if unavailable):')
+    return 'PERCENT_CHANGE'
+
+async def percent_change_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    percent_change = update.message.text
+    context.user_data['percent_change'] = float(percent_change) if percent_change != "none" else None
+    await update.message.reply_text('Please provide the total profit in USD (or "none" if unavailable):')
+    return 'PROFIT'
+
+async def profit_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    profit = update.message.text
+    context.user_data['profit'] = float(profit) if profit != "none" else None
+    
+    # Perform analysis
+    token_ca = context.user_data['token_ca']
+    buy_usd = context.user_data['buy_usd']
+    realized_usd = context.user_data['realized_usd']
+    unrealized_usd = context.user_data['unrealized_usd']
+    percent_change = context.user_data['percent_change']
+    profit = context.user_data['profit']
+
+    similar_wallets = find_similar_wallets(token_ca, buy_usd, realized_usd, unrealized_usd, percent_change, profit)
+
+    if similar_wallets:
+        response = "\n".join(similar_wallets)
+        await update.message.reply_text(f"Top 10 similar wallets:\n{response}")
+    else:
+        await update.message.reply_text("No similar wallets found.")
+
+async def main():
+    # Replace 'YOUR TOKEN HERE' with your actual Telegram bot token
+    application = ApplicationBuilder().token("YOUR TOKEN HERE").build()
+
+    # Registering commands and message handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("analyze", analyze))
+    
+    # Add handlers for data collection
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, token_ca_received))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, buy_usd_received))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, realized_usd_received))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unrealized_usd_received))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, percent_change_received))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, profit_received))
+
+    # Start the Bot
+    await application.start_polling()
+
+if __name__ == '__main__':
+    import asyncio
+    asyncio.run(main())
